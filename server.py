@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-''' Copyright (C) 2016  Povilas Kanapickas <povilas@radix.lt>
+''' Copyright (C) 2017  Povilas Kanapickas <povilas@radix.lt>, Alex M Sokolov <aleksoros@gmail.com>
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -111,17 +111,15 @@ class AuthConfig:
             print("Error reading config file " + config_file_path)
             print(e)
 
-    def check_perm(self, perms, user, perm):
+    def check_perm(self, perms, user, perm)->bool:
         if user in perms:
             if perm in perms[user]:
                 return True
-            return False
 
         if '*' in perms:
             if perm in perms['*']:
                 return True
-            return False
-        return None
+        return False
 
     def combine_perm(self, prev, next):
         if next == None:
@@ -137,24 +135,27 @@ class AuthConfig:
         p = self.root
         items = path.split('/')
 
-        result = self.combine_perm(True, self.check_perm(p.perms, user, perm))
+        result = any([False, self.check_perm(p.perms, user, perm)])
 
         for i in items:
             if i not in p.children:
                 return result
             p = p.children[i]
 
-            result = self.combine_perm(result, self.check_perm(p.perms, user, perm))
+            result = any([result, self.check_perm(p.perms, user, perm)])
 
         return result
 
 class AuthUploadHandler(SimpleUploadHandler):
+    from datetime import datetime
+    _realmName ="Python 3 File Server # "+datetime.now().isoformat()
 
     def do_AUTHHEAD(self):
+        print("Authenticating client:")
         print(self.headers)
 
         self.send_response(401)
-        self.send_header('WWW-Authenticate', 'Basic realm=\"Test\"')
+        self.send_header('WWW-Authenticate', 'Basic realm=\"'+self._realmName+'\"')
         self.send_header('Content-type', 'text/html')
         self.end_headers()
         self.wfile.write(b'Not authenticated\n')
@@ -163,6 +164,8 @@ class AuthUploadHandler(SimpleUploadHandler):
         try:
             path = self.translate_path(self.path)
             path = os.path.relpath(path)
+            path=path.replace("\\","/")#fix for windows path
+
             if path.startswith('..'):
                 return False
 
@@ -179,8 +182,10 @@ class AuthUploadHandler(SimpleUploadHandler):
             return self.server.auth_config.check_path_for_perm(path, perm, user, psw)
 
         except Exception as e:
-            print("Error serving " + self.path)
-            self.wfile.write(str(e))
+            errorMessage="Error serving " + self.path
+            print(errorMessage)
+            print(str(e))
+            self.wfile.write(errorMessage)
             return False
 
     def check_auth(self, perm):
@@ -201,31 +206,58 @@ class AuthUploadHandler(SimpleUploadHandler):
         if self.check_auth('w'):
              SimpleUploadHandler.do_PUT(self)
 
-if __name__ == '__main__':
-    def help_and_exit():
-        print('usage server.py port [--access_config file]')
-        sys.exit(1)
+def main():
+    from argparse import ArgumentParser, RawTextHelpFormatter
+    import os
 
-    if ('--help' in sys.argv) or (len(sys.argv) not in [2,4]):
-        help_and_exit()
-    port = int(sys.argv[1])
-    access_config_file = None
-    if len(sys.argv) == 4:
-        if sys.argv[2] != "--access_config":
-            help_and_exit()
-        access_config_file = sys.argv[3]
-        if not os.path.exists(access_config_file):
-            print("No such file: " + access_config_file)
-            help_and_exit()
+    absoluteConfigPath : str
 
-    if access_config_file == None:
-        print('listening on localhost:%d' %(port))
-        server = HTTPServer(('localhost', port), SimpleUploadHandler)
+    requestHandlerClass: SimpleUploadHandler
+
+    argsParser=ArgumentParser(
+        description="HTTP/HTTPS file server with upload functionality and configurable permission control",
+        usage="Usage: %(prog)s --port [port] [--https] [pem file location] [--config] [config file]",
+        epilog="""Usage Example:       
+        Startw a https file server with permission control with access to C:\Temp (server is available at https://localhost:4443)-
+        %(prog)s 4443 "C:\Temp" --https ".\cert\server.pem" --config permissions.json
+        
+        Startw a http server without permission control on default port -
+        %(prog)s""",formatter_class=RawTextHelpFormatter)
+    argsParser.add_argument("-p","--port",help="Optional. TCP/IP Port to access server on. It defaults to 8081", type=int,default=8081)
+    argsParser.add_argument("-d","--dir",help="Optional. Root dir for file server. It defaults to the script location",default=os.getcwd())
+    argsParser.add_argument("--https", help="Optional. Adds TLS (transport layer secure). Pem file location should be specified as second argument for this option.")
+    argsParser.add_argument("--config",help="Optional. Permissions config json file")
+
+    options=argsParser.parse_args()
+
+    if options.config:
+        requestHandlerClass=AuthUploadHandler
+        absoluteConfigPath=os.path.realpath(options.config)
     else:
-        print('listening on localhost:%d with access restrictions' %(port))
+        requestHandlerClass=SimpleUploadHandler
+
+    if options.dir!=os.getcwd():
+        print("Changing root dir to {cd}".format(cd=options.dir))
+        os.chdir(options.dir)
+
+    server = HTTPServer(('', options.port), requestHandlerClass)
+
+    if options.config:
+        print("Access restrictions enabled and loaded from " + absoluteConfigPath)
         auth_config = AuthConfig()
-        auth_config.load_config(access_config_file)
-        server = HTTPServer(('localhost', port), AuthUploadHandler)
+        auth_config.load_config(absoluteConfigPath)
         server.auth_config = auth_config
 
+    if options.https:
+        print("HTTPS enabled")
+        import ssl
+        server.socket = ssl.wrap_socket(server.socket, certfile=options.https, server_side=True)
+
+    print('listening on %s://localhost:%d' % (
+        "https" if options.https else "http",
+        options.port
+    ))
     server.serve_forever()
+
+if __name__ == '__main__':
+    main()
