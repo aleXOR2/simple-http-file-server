@@ -20,7 +20,6 @@ import shutil
 import subprocess
 import requests
 import time
-from server import isWindows
 
 class Test:
     def __init__(self, port = 8080, perm_path = None, perms_json = None):
