@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-''' Copyright (C) 2016  Povilas Kanapickas <povilas@radix.lt>
+''' Copyright (C) 2017  Povilas Kanapickas <povilas@radix.lt>, Alex M Sokolov <aleksoros@gmail.com>
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import requests
 import time
+from server import isWindows
 
 class Test:
     def __init__(self, port = 8080, perm_path = None, perms_json = None):
@@ -27,8 +28,7 @@ class Test:
         self.port = port
 
         file_dir = os.path.dirname(os.path.abspath(__file__))
-
-        cmd = ["python3", os.path.join(file_dir, 'server.py'), str(port)]
+        cmd = ["python" if isWindows() else "python3", os.path.join(file_dir, 'server.py'), "--port",str(port)]
 
         if perms_json != None:
             perm_path = os.path.join(file_dir, "tmp_tests_perms.json")
@@ -36,7 +36,7 @@ class Test:
 
         if perm_path != None:
             perm_path = os.path.abspath(perm_path)
-            cmd += ['--access_config', perm_path]
+            cmd += ['--config', perm_path]
 
         self.root = os.path.join(file_dir, "tmp_tests_dir")
         if os.path.exists(self.root):
@@ -186,14 +186,14 @@ with Test(perms_json=perms_json) as test:
 
 perms_json = '''
 {
-    "paths" : [
-        { "path" : ".", "user" : "*", "perms" : "" },
+    "paths" : [,
         { "path" : "or", "user" : "*", "perms" : "r" },
+        #user will have rw permissions as it unites with * permissions
         { "path" : "or", "user" : "user1", "perms" : "w" },
         { "path" : "ow", "user" : "*", "perms" : "w" },
+        #user will have rw permissions as it unites with * permissions
         { "path" : "ow", "user" : "user1", "perms" : "r" },
         { "path" : "orw", "user" : "*", "perms" : "rw" },
-        { "path" : "orw", "user" : "user1", "perms" : "" },
         { "path" : "ur", "user" : "user1", "perms" : "r" },
         { "path" : "uw", "user" : "user1", "perms" : "w" },
         { "path" : "urw", "user" : "user1", "perms" : "rw" }
@@ -211,17 +211,18 @@ with Test(perms_json=perms_json) as test:
     test.test_get("ff1", 401)
 
     test.test_get("or", 404)
+    test.test_get("or", 404, user='user1', psw='pass1')
     test.test_put("or/t", 200, "1", user='user1', psw='pass1')
     test.test_put("or/t", 401, "1", user='user1', psw='p')
     test.test_put("or/t", 401, "1", user='user2', psw='pass2')
     test.test_put("or/t", 401, "1", user='user2', psw='p')
-    test.test_get("or/t", 401, user='user1', psw='pass1')
+    test.test_get("or/t", 200, user='user1', psw='pass1')
     test.test_get("or/t", 200, "1", user='user2', psw='pass2')
     test.test_get("or", 200)
     test.test_get("or/t", 200, "1")
 
     test.test_put("ow/t", 200, "1")
-    test.test_put("ow/t", 401, "1", user='user1', psw='pass1')
+    test.test_put("ow/t", 200, "1", user='user1', psw='pass1')
     test.test_put("ow/t", 401, "1", user='user1', psw='p')
     test.test_put("ow/t", 200, "1", user='user2', psw='pass2')
     test.test_put("ow/t", 401, "1", user='user2', psw='p')
@@ -236,14 +237,12 @@ with Test(perms_json=perms_json) as test:
     test.test_get("orw", 404)
     test.test_put("orw/t", 200, "1")
     test.test_get("orw/t", 200, "1")
-    test.test_get("orw", 200)
-    test.test_put("orw/t", 401, "1", user='user1', psw='pass1')
     test.test_put("orw/t", 401, "1", user='user1', psw='p')
     test.test_put("orw/t", 200, "1", user='user2', psw='pass2')
     test.test_put("orw/t", 401, "1", user='user2', psw='p')
     test.test_get("orw/t", 200, "1")
-    test.test_get("orw", 401, user='user1', psw='pass1')
-    test.test_get("orw/t", 401, user='user1', psw='pass1')
+    test.test_get("orw", 200, user='user1', psw='pass1')
+    test.test_get("orw/t", 200, user='user1', psw='pass1')
     test.test_get("orw/t", 401, user='user1', psw='p')
     test.test_get("orw/t", 200, "1", user='user2', psw='pass2')
     test.test_get("orw/t", 401, user='user2', psw='p')
@@ -308,8 +307,3 @@ with Test(perms_json=perms_json) as test:
     test.test_get("other", 401, user='user1', psw='p')
     test.test_get("other", 401, user='user2', psw='pass2')
     test.test_get("other", 401, user='user2', psw='p')
-
-
-
-
-
